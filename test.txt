@@ -1,0 +1,261 @@
+#include <Windows.h>
+
+typedef char		i8;
+typedef short		i16;
+typedef int			i32;
+typedef long long	i64;
+
+typedef i32			b32;
+typedef float		f32;
+typedef double		f64;
+
+typedef unsigned char		u8;
+typedef unsigned short		u16;
+typedef unsigned int		u32;
+typedef unsigned long long	u64;
+
+b32 isRunning = false;
+
+struct Win32Buffer
+{
+	BITMAPINFO bmi;
+	i32 width;
+	i32 height;
+	u32 bpp;
+	u32 pitch;
+	void* data;
+};
+
+struct Win32WndDim
+{
+	i32 width;
+	i32 height;
+};
+
+Win32Buffer globalBuffer;
+
+Win32WndDim Win32GetWindowDims(HWND window)
+{
+	Win32WndDim Result = {};
+	RECT rect = {};
+	GetClientRect(window, &rect);
+
+	Result.width = rect.right - rect.left;
+	Result.height = rect.bottom - rect.top;
+	return Result;
+}
+
+struct FileResult
+{
+	void* data;
+	i64 fileSize;
+};
+
+void Win32ResizeDIBSection(Win32Buffer* Buffer, i32 width, i32 height)
+{
+	if (Buffer->data)
+	{
+		VirtualFree(Buffer->data, 0, MEM_RELEASE);
+	}
+
+	Buffer->width = width;
+	Buffer->height = height;
+	Buffer->bpp = 4;
+	Buffer->pitch = Buffer->bpp * Buffer->width;
+
+	Buffer->bmi.bmiHeader.biSize = sizeof(Buffer->bmi.bmiHeader);
+	Buffer->bmi.bmiHeader.biWidth = Buffer->width;
+	Buffer->bmi.bmiHeader.biHeight = -Buffer->height;
+	Buffer->bmi.bmiHeader.biPlanes = 1;
+	Buffer->bmi.bmiHeader.biBitCount = 32;
+	Buffer->bmi.bmiHeader.biCompression = BI_RGB;
+	
+	i32 BufferSize = Buffer->bpp * (Buffer->width * Buffer->height);
+
+	Buffer->data = VirtualAlloc(0, BufferSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+}
+
+void Win32UpdateWindow(HDC device, Win32Buffer* Buffer, i32 width, i32 height)
+{
+	StretchDIBits(device, 
+		0, 0, Buffer->width, Buffer->height,
+		0, 0, Buffer->width, Buffer->height, 
+		Buffer->data, &Buffer->bmi, 
+		DIB_RGB_COLORS, SRCCOPY);
+}
+
+void DrawStuff(Win32Buffer* Buffer, i32 OffsetX, i32 OffsetY)
+{
+	u8* Row = (u8*)Buffer->data;
+
+	for (int row = 0;
+		row < Buffer->height;
+		row++)
+	{
+		u32* Pixels = (u32*)Row;
+		for (int col = 0;
+			col < Buffer->width;
+			col++)
+		{
+			u8 Red = row * 10 + OffsetX;
+			u8 Green = col * 10 + OffsetY;
+			u8 Blue = row + col * 10;
+
+			*Pixels++ = (u32)((Red << 16) | (Green << 8) | (Blue << 0));
+		}
+		Row += Buffer->pitch;
+	}
+}
+
+LRESULT CALLBACK WndProc(HWND window, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+	LRESULT Result = 0;
+
+	switch (msg)
+	{
+	case WM_CREATE:
+	{
+
+	}break;
+
+	case WM_PAINT:
+	{
+		PAINTSTRUCT ps;
+		HDC device = BeginPaint(window, &ps);
+
+		Win32WndDim WndDim = Win32GetWindowDims(window);
+		Win32UpdateWindow(device, &globalBuffer, WndDim.width, WndDim.height);
+
+		EndPaint(window, &ps);
+	}break;
+
+	case WM_CLOSE:
+	{
+		isRunning = false;
+	}break;
+
+	default:
+	{
+		Result = DefWindowProc(window, msg, wparam, lparam);
+	}break;
+	}
+
+	return Result;
+}
+
+void Win32FreeMemory(void* memory)
+{
+	if (memory)
+	{
+		VirtualFree(memory, 0, MEM_RELEASE);
+		memory = 0;
+	}
+}
+
+FileResult PlatformReadEntireFile(i8* filename)
+{
+	FileResult Result = {};
+	HANDLE file = CreateFile(filename, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
+
+	if (file != INVALID_HANDLE_VALUE)
+	{
+		LARGE_INTEGER fileSize = {};
+		GetFileSizeEx(file, &fileSize);
+		i64 size = fileSize.QuadPart;
+
+		Result.data = VirtualAlloc(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		if (Result.data)
+		{
+			DWORD bytesRead = 0;
+			if (ReadFile(file, Result.data, size, &bytesRead, 0) && size == bytesRead)
+			{
+				Result.fileSize = bytesRead;
+			}
+		}
+
+		CloseHandle(file);
+	}
+
+	return Result;
+}
+
+void PlatformWriteEntireFile(i8* filename, FileResult fileData)
+{
+	HANDLE file = CreateFile(filename, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0);
+	if (file != INVALID_HANDLE_VALUE)
+	{
+		DWORD bytesWritten = 0;
+		WriteFile(file, fileData.data, fileData.fileSize, &bytesWritten, 0);
+	}
+	CloseHandle(file);
+}
+
+int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdLine, int cmdShow)
+{
+	FileResult file = PlatformReadEntireFile("syswin.cpp");
+	PlatformWriteEntireFile("test.txt", file);
+	Win32FreeMemory(file.data);
+
+	WNDCLASS wc = {0};
+	
+	Win32ResizeDIBSection(&globalBuffer, 1024, 768);
+
+	wc.hbrBackground = (HBRUSH)COLOR_WINDOW;
+	wc.hCursor = LoadCursor(0, IDC_ARROW);
+	wc.hIcon = LoadIcon(0, IDI_APPLICATION);
+	wc.hInstance = hInst;
+	wc.lpfnWndProc = (WNDPROC)WndProc;
+	wc.lpszClassName = "WulfEngine";
+	wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
+
+	RegisterClass(&wc);
+
+	HWND window = CreateWindow("WulfEngine", "WulfEngine",
+								WS_OVERLAPPEDWINDOW,
+								CW_USEDEFAULT, CW_USEDEFAULT,
+								1024, 768,
+								0, 0, hInst, 0);
+
+	if (!window)
+		return -1;
+
+	UpdateWindow(window);
+	ShowWindow(window, SW_SHOW);
+
+	isRunning = true;
+
+	i32 OffsetX = 0, OffsetY = 0;
+
+	while (isRunning)
+	{
+		MSG msg = {};
+		while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
+		{
+			switch (msg.message)
+			{
+			case WM_KEYDOWN:
+			{
+
+			}break;
+
+			default:
+			{
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}break;
+			}
+		}
+
+		DrawStuff(&globalBuffer, ++OffsetX, ++OffsetY);
+
+		HDC device = GetDC(window);
+		Win32WndDim WndDim = Win32GetWindowDims(window);
+		Win32UpdateWindow(device, &globalBuffer, WndDim.width, WndDim.height);
+	}
+
+	UnregisterClass("WulfEngine", hInst);
+	DestroyWindow(window);
+	Win32FreeMemory(globalBuffer.data);
+
+	return 0;
+}
