@@ -1,42 +1,10 @@
 #include <Windows.h>
 #include <stdio.h>
-
-typedef char		i8;
-typedef short		i16;
-typedef int			i32;
-typedef long long	i64;
-
-typedef i32			b32;
-typedef float		f32;
-typedef double		f64;
-
-typedef unsigned char		u8;
-typedef unsigned short		u16;
-typedef unsigned int		u32;
-typedef unsigned long long	u64;
-
-typedef size_t mem_size;
-
+#include "syswin.h"
 #include "engine.h"
 
 b32 isRunning = false;
 LARGE_INTEGER globalPerfFreq;
-
-struct Win32Buffer
-{
-	BITMAPINFO bmi;
-	i32 width;
-	i32 height;
-	u32 bpp;
-	u32 pitch;
-	void* data;
-};
-
-struct Win32WndDim
-{
-	i32 width;
-	i32 height;
-};
 
 Win32Buffer globalBuffer;
 
@@ -51,12 +19,6 @@ Win32WndDim Win32GetWindowDims(HWND window)
 	return Result;
 }
 
-struct FileResult
-{
-	void* data;
-	i64 fileSize;
-};
-
 void Win32FreeMemory(void* memory)
 {
 	if (memory)
@@ -66,7 +28,6 @@ void Win32FreeMemory(void* memory)
 	}
 }
 
-#define PLATFORM_READ_ENTIRE_FILE(name) FileResult name(i8* filename)
 PLATFORM_READ_ENTIRE_FILE(PlatformReadEntireFile)
 {
 	FileResult Result = {};
@@ -94,7 +55,6 @@ PLATFORM_READ_ENTIRE_FILE(PlatformReadEntireFile)
 	return Result;
 }
 
-#define PLATFORM_WRITE_ENTIRE_FILE(name) void name(i8* filename, FileResult fileData)
 PLATFORM_WRITE_ENTIRE_FILE(PlatformWriteEntireFile)
 {
 	HANDLE file = CreateFile(filename, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0);
@@ -102,8 +62,9 @@ PLATFORM_WRITE_ENTIRE_FILE(PlatformWriteEntireFile)
 	{
 		DWORD bytesWritten = 0;
 		WriteFile(file, fileData.data, (DWORD)fileData.fileSize, &bytesWritten, 0);
+
+		CloseHandle(file);
 	}
-	CloseHandle(file);
 }
 
 void Win32ResizeDIBSection(Win32Buffer* Buffer, i32 width, i32 height)
